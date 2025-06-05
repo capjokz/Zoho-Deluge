@@ -1,0 +1,306 @@
+tmrwcomp = toDate(today.addDay(1),"yyyy-MM-dd");
+newLine = hexToText("0A");
+//info userids;
+tdy = now.toString("yyyy-MM-dd");
+st = tdy.addDay(0).concat(" 18:00:00");
+st1 = st.toString("yyyy-MM-dd'T'HH:mm:ss").concat("+05:30");
+et = tdy.addDay(1).concat(" 05:30:00");
+et1 = et.toString("yyyy-MM-dd'T'HH:mm:ss").concat("+05:30");
+cr = st1.concat(",").concat(et1);
+fcr = encodeUrl(cr);
+criteria = "((Source:not_equal:" + NULL + ")and(Start_DateTime:between:" + fcr + "))";
+// info criteria;
+events = invokeurl
+[
+	url :"https://www.zohoapis.com/crm/v7/Events/search?criteria=" + criteria + ""
+	type :GET
+	connection:"partnerteam"
+];
+// info events;
+esize = events.get("data").size();
+unsortedticketkeys = list();
+unsortedticketkeysuid = list();
+sortedticketkeys = list();
+unprocessedticketkeys = list();
+userids = list();
+if(esize >= 1)
+{
+	usergrp = invokeurl
+	[
+		url :"https://www.zohoapis.com/crm/v7/settings/user_groups/4538240000001435959/sources?type=users&user_type=active"
+		type :GET
+		connection:"partnerteam"
+	];
+	sources = usergrp.get("sources");
+	for each  source in sources
+	{
+		uid = source.get("source").get("id");
+		userids.add(uid);
+	}
+	// 	info userids;
+	eventlist = events.toList();
+	for each  event in eventlist
+	{
+		evelist = event.get("data");
+		for each  eve in evelist
+		{
+			if(eve.get("$event_cancelled") != true)
+			{
+				//info eve;
+				tid = eve.get("Source");
+				tid = tid.replaceAll("[^0-9]","");
+				//ocount = tid.indexOf("#");
+				sdate = eve.get("Start_DateTime");
+				eid = eve.get("id");
+				hid = eve.get("Owner").get("id");
+				ticketkey = Map();
+				ticketkey.put("Ticket_ID",tid);
+				ticketkey.put("Start_DateTime",sdate);
+				ticketkey.put("Event_ID",eid);
+				ticketkey.put("HostID",hid);
+				unsortedticketkeys.add(ticketkey);
+			}
+		}
+	}
+}
+if(unsortedticketkeys.size() > 0)
+{
+	for each  userid in userids
+	{
+		for each  ticketkey in unsortedticketkeys
+		{
+			if(userid == ticketkey.get("HostID"))
+			{
+				//info ticketkey.get("HostID");
+				unsortedticketkeysuid.add(ticketkey);
+			}
+		}
+	}
+}
+uniqueunsortedticketkeysuid = unsortedticketkeysuid.distinct();
+if(uniqueunsortedticketkeysuid.size() > 0)
+{
+	for each  ticketkey in uniqueunsortedticketkeysuid
+	{
+		ticketid = ticketkey.get("Ticket_ID");
+		ticket = invokeurl
+		[
+			url :"https://desk.zoho.com/api/v1/tickets/search?limit=1&ticketNumber=" + ticketid + "&departmentId=4000015257787"
+			type :GET
+			connection:"partnerteam"
+		];
+		if(ticket.contains("errorCode") == true || ticket.size() == null)
+		{
+			unprocessedticketkeys.add(ticketkey);
+			uniqueunsortedticketkeysuid.removeElement(ticketkey);
+			continue;
+		}
+	}
+}
+// info unprocessedticketkeys;
+if(unprocessedticketkeys.size() > 0)
+{
+	for each  unprocessedticketkey in unprocessedticketkeys
+	{
+		ticketid = unprocessedticketkey.get("Ticket_ID");
+		ticket = invokeurl
+		[
+			url :"https://desk.zoho.com/api/v1/tickets/search?limit=1&departmentId=4000015257787&subject=" + ticketid + "*"
+			type :GET
+			connection:"partnerteam"
+		];
+		if(ticket.contains("errorCode") == true || ticket.size() == null)
+		{
+			continue;
+		}
+		ticketnumber = ticket.get("data").get(0).get("ticketNumber");
+		unprocessedticketkey.remove("Ticket_ID");
+		unprocessedticketkey.put("Ticket_ID",ticketnumber);
+		uniqueunsortedticketkeysuid.add(unprocessedticketkey);
+		unprocessedticketkeys.removeElement(unprocessedticketkey);
+	}
+}
+// info unprocessedticketkeys;
+if(uniqueunsortedticketkeysuid.size() > 0)
+{
+	sortKey = "Start_DateTime";
+	keylist = List();
+	for each  ticketkeys in uniqueunsortedticketkeysuid
+	{
+		keylist.add(ticketkeys.get(sortKey));
+	}
+	keylist = keylist.distinct().sort(true);
+	for each  key in keylist
+	{
+		for each  ticketkey in uniqueunsortedticketkeysuid
+		{
+			if(ticketkey.get(sortKey) == key)
+			{
+				sortedticketkeys.add(ticketkey);
+			}
+		}
+	}
+}
+//info sortedticketkeys.size();
+// info sortedticketkeys;
+// info unprocessedticketkeys;
+if(sortedticketkeys.size() > 0)
+{
+	tablerows = list();
+	for each  ticketkey in sortedticketkeys
+	{
+		ticketid = ticketkey.get("Ticket_ID");
+		eventid = ticketkey.get("Event_ID");
+		stime = ticketkey.get("Start_DateTime");
+		stime = stime.toTime("yyyy-MM-dd'T'HH:mm:ss+05:30");
+		stime = toString(stime," 'at' h.mm a ");
+		// 		info stime;
+		ticket = invokeurl
+		[
+			url :"https://desk.zoho.com/api/v1/tickets/search?limit=1&ticketNumber=" + ticketid + "&departmentId=4000015257787"
+			type :GET
+			connection:"partnerteam"
+		];
+		// 		info ticket;
+		sub = ticket.get("data").get(0).get("subject");
+		dept = ticket.get("data").get(0).get("department").get("name");
+		turl = ticket.get("data").get(0).get("webUrl");
+		tidlong = ticket.get("data").get(0).get("id");
+		tnumber = ticket.get("data").get(0).get("ticketNumber");
+		// 		info tidlong ;
+		if(ticket.get("data").get(0).get("assignee") != null)
+		{
+		aemail = ticket.get("data").get(0).get("assignee").get("emailId");
+		azuid = ticket.get("data").get(0).get("assignee").get("zuid");
+		afname = ticket.get("data").get(0).get("assignee").get("firstName");
+		alname = ticket.get("data").get(0).get("assignee").get("lastName");
+		aname = afname.concat(" ").concat(alname);
+		aname = "[" + aname + "](zohoid:" + azuid + ")";
+		fticket = "#" + tnumber;
+		eventurl = "https://crmplus.zoho.com/zohocorppace/index.do/cxapp/crm/onezoho/tab/Events/" + eventid + "";
+		uscliqchannel = "https://cliq.zoho.com/company/64396901/channels/partnersupportcallbooking";
+		cmntcontent = Map();
+		cmntcontent.put("contentType","html");
+		cmntcontent.put("content","<html><body><font face=\"Tahoma\">Hi zsu[@user:" + azuid + "]zsu you have call scheduled " + stime + "<p>For call details: <a href=" + eventurl + ">Click Here</a></p> <p><span style=\"text-decoration: underline;\"><span style=\"color: #ff0000;\"><strong>Note:</strong></p> <p>Please make sure to add thumps up ' 👍 ' for this call notification in Zoho Cliq channel here - <a href= " + uscliqchannel + " > #Partner Support Call Booking </a></p></body></html>");
+		if(dept == "Partner Support")
+		{
+			postcomment = invokeurl
+			[
+				url :"https://desk.zoho.com/api/v1/tickets/" + tidlong + "/comments"
+				type :POST
+				parameters:cmntcontent.toString()
+				connection:"partnerteam"
+			];
+			mp = Map();
+			mp.put("status","Open");
+			uticket = invokeurl
+			[
+				url :"https://desk.zoho.com/api/v1/tickets/" + tidlong + ""
+				type :PATCH
+				parameters:mp.toString()
+				connection:"partnerteam"
+			];
+		}
+		// 				info postcomment;
+		notify = Map();
+		notify.put("text"," Hi {@" + azuid + "}" + newLine + "" + newLine + "Ticket ID: " + fticket + "" + newLine + "Subject: " + sub + "" + newLine + "Department: " + dept + "" + newLine + "URL: " + turl + "" + newLine + "" + newLine + "*Call has been scheduled for the above ticket* *`" + stime + "`* *Today*" + newLine + newLine + "`*Kindly call the partner on time and ask if they are comfortable conversing over the phone or via the Assist Chat. Do not just send the Remote Assist Link and wait for them to join. The purpose of Call Booking is to have a clear telephonic conversation with the partner.*`");
+		notify.put("userids",aemail);
+		posttocliq = invokeurl
+		[
+			url :"https://cliq.zoho.com/api/v2/bots/centralitqueries/message"
+			type :POST
+			parameters:notify.toString()
+			connection:"partnerteam"
+		];
+		// 		info "notify:" + posttocliq;
+		}
+		else {
+		aname = "Unassigned";
+		}
+		fticket = "[#" + tnumber + "](" + turl + ")";
+		rowmap = Map();
+		rowmap.put("Agent Name",aname);
+		rowmap.put("Ticket ID",fticket);
+		rowmap.put("Call Scheduled Time [IST]",stime);
+		tablerows.add(rowmap);
+	}
+	// info tablerows;
+	// 	info sortedticketkeys.size();
+	// 	info unprocessedticketkeys.size();
+	hlist0 = list();
+	slides = list();
+	hlist0.add("Agent Name");
+	hlist0.add("Ticket ID");
+	hlist0.add("Call Scheduled Time [IST]");
+	slidemap = Map();
+	slidemap.put("type","table");
+	slidemap.put("title","Call Details - Agent Wise");
+	hrmap = Map();
+	hrmap.put("headers",hlist0);
+	hrmap.put("rows",tablerows);
+	slidemap.put("data",hrmap);
+	slides.add(slidemap);
+	table_data = Map();
+	table_data.put("text","*Hi Team* {@participants}" + newLine + "" + newLine + "*Zoho CRM - US - Total Number of Calls Scheduled for the DAY is `" + sortedticketkeys.size() + "` between `6.00 PM IST Today` to `5.30 AM IST Tomorrow`*" + newLine + "" + newLine + "*__Please find the__*__ *`Agent Wise`* *Call Details below:*__");
+	table_data.put("slides",slides);
+	//info table_data;
+	posttable = invokeurl
+	[
+		url :"https://cliq.zoho.com/api/v2/channelsbyname/partnersupportcallbooking/message?bot_unique_name=callbookingalerts"
+		type :POST
+		parameters:table_data.toString()
+		connection:"partnerteam"
+	];
+	// 	info posttable;
+}
+else
+{
+	content = Map();
+	content.put("text","*Hi Team* {@participants}" + newLine + "" + newLine + "`*US*` *-  No Calls Scheduled for the DAY in Zoho CRM.*");
+	nocalls = invokeurl
+	[
+		url :"https://cliq.zoho.com/api/v2/channelsbyname/partnersupportcallbooking/message?bot_unique_name=callbookingalerts"
+		type :POST
+		parameters:content.toString()
+		connection:"partnerteam"
+	];
+}
+// info uniqueunsortedticketkeysuid ;
+// info events.get("data").size();
+if(unprocessedticketkeys.size() > 0)
+{
+	for each  unprocessedticketkey in unprocessedticketkeys
+	{
+		unprocessedticketkey.remove("Start_DateTime");
+		unprocessedticketkey.remove("HostID");
+	}
+	notify = Map();
+	notify.put("text","Call Booking - Unprocessed Tickets - US: " + newLine + "" + unprocessedticketkeys);
+	// 	662052420 Deepak 
+	// 671042286 Gokul
+	// 775630258 Nick
+	// 683141573 Srivats
+	// 765612154 Joshi
+	notify.put("userids","775630258,662052420,671042286,765612154,683141573");
+	posttocliq = invokeurl
+	[
+		url :"https://cliq.zoho.com/api/v2/bots/centralitqueries/message"
+		type :POST
+		parameters:notify.toString()
+		connection:"partnerteam"
+	];
+	// 	info "notify:" + posttocliq;
+	sendmail
+	[
+		from :zoho.loginuserid
+		to :"nickelson.j@zohocorp.com"
+		subject :"Unprocessed Call Booking Ticket IDs - US"
+		message :unprocessedticketkeys
+	]
+}
+// info posttable;
+// info sortedticketkeys;
+// info unsortedticketkeys;
+info "Table Data: " + table_data.toString();
+info "sortedticketkeys: " + sortedticketkeys;
+info "unprocessedticketkeys: " + unprocessedticketkeys;
